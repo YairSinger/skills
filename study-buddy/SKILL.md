@@ -21,7 +21,7 @@ This skill runs in **four phases**:
 Before generating a new plan, check if past study session analytics exist to calibrate the plan to the user's actual pace:
 
 ```bash
-ls ~/study-plans/study-buddy-app/analytics/*.json 2>/dev/null
+ls ~/.claude/skills/study-buddy/app/analytics/*.json 2>/dev/null
 ```
 
 If analytics files exist, read them to understand:
@@ -168,7 +168,7 @@ mkdir -p ~/study-plans
 
 4. **Launch the Study Buddy app:**
 ```bash
-cd ~/study-plans/study-buddy-app && node server.js &
+cd ~/.claude/skills/study-buddy/app && node server.js &
 sleep 1
 open http://localhost:3456
 ```
@@ -285,14 +285,14 @@ Then remind the user to save their session analytics:
 
 ## Study Buddy App
 
-A companion web app at `~/study-plans/study-buddy-app/` that provides a visual study dashboard with time tracking, rendered plan viewing, and an embedded terminal.
+A companion web app bundled with this skill at `~/.claude/skills/study-buddy/app/` that provides a visual study dashboard with time tracking, rendered plan viewing, and an embedded terminal.
 
 ### Quick Start
 
 ```bash
 study-buddy          # shell alias — starts the server and opens the browser
 # or manually:
-cd ~/study-plans/study-buddy-app && npm start   # runs on http://localhost:3456
+cd ~/.claude/skills/study-buddy/app && npm start   # runs on http://localhost:3456
 ```
 
 ### Features
@@ -324,14 +324,14 @@ cd ~/study-plans/study-buddy-app && npm start   # runs on http://localhost:3456
 - Progress fill bars behind segment pills and under section headers
 
 **Session Analytics**
-- Click **Save Session** to persist timing data as JSON to `~/study-plans/study-buddy-app/analytics/`
+- Click **Save Session** to persist timing data as JSON to `~/.claude/skills/study-buddy/app/analytics/`
 - Each file captures: subject, date, per-segment durations (actual vs expected), total duration, completed segments
 - The skill reads these analytics in Phase 0 to calibrate future plans to the user's actual pace
 
 ### Architecture
 
 ```
-~/study-plans/study-buddy-app/
+~/.claude/skills/study-buddy/app/
   server.js          — Express server, WebSocket terminal (node-pty), REST API
   public/
     index.html       — App shell with plan selector + split-pane layout
@@ -375,5 +375,5 @@ cd ~/study-plans/study-buddy-app && npm start   # runs on http://localhost:3456
 ### Troubleshooting
 
 - **Port 3456 in use**: `PORT=3457 node server.js` or kill the existing process with `pkill -f "node server.js"`
-- **Terminal won't connect**: Run `chmod +x ~/study-plans/study-buddy-app/node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper` — this is a known node-pty permission issue (the `postinstall` script should handle it, but may need a manual run after `npm install`)
+- **Terminal won't connect**: Run `chmod +x ~/.claude/skills/study-buddy/app/node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper` — this is a known node-pty permission issue (the `postinstall` script should handle it, but may need a manual run after `npm install`)
 - **Timers not pausing**: Ensure you're on a Chromium-based browser or Safari — the Page Visibility API is used alongside `window.blur/focus` for cross-browser coverage
