@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Study Buddy</title>
+  <link rel="stylesheet" href="/xterm/css/xterm.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Plan selector -->
+  <div id="plan-selector">
+    <div class="selector-content">
+      <h1>Study Buddy</h1>
+      <p class="subtitle">Select a study plan to begin</p>
+      <div class="search-wrap">
+        <input id="plan-search" type="text" placeholder="Search plans…" autocomplete="off" spellcheck="false">
+      </div>
+      <div id="plan-list"></div>
+    </div>
+  </div>
+
+  <!-- Main app -->
+  <div id="app" class="hidden">
+    <header>
+      <div class="header-left">
+        <button id="back-btn" title="Back to plans">&larr;</button>
+        <h1 id="plan-title">Study Buddy</h1>
+        <span id="phase-indicator" class="phase-indicator"></span>
+      </div>
+      <div class="header-right">
+        <div class="total-timer">
+          <span class="timer-label">Session</span>
+          <span id="total-time" class="timer-value">00:00:00</span>
+          <span id="total-expected" class="timer-expected"></span>
+        </div>
+        <span id="pause-badge" class="pause-badge hidden">PAUSED</span>
+        <button id="save-btn" class="btn-primary">Save Session</button>
+      </div>
+    </header>
+
+    <!-- Segment progress bar -->
+    <div id="segment-bar"></div>
+
+    <!-- Split panes -->
+    <div id="main-content">
+      <div id="plan-pane">
+        <div id="plan-sections"></div>
+      </div>
+      <div id="divider"></div>
+      <div id="terminal-pane">
+        <div class="terminal-header">
+          <span>Terminal</span>
+          <span class="terminal-hint" id="terminal-hint">Run <code>claude</code> for interactive sessions</span>
+          <button id="terminal-minimize-btn" title="Minimize terminal">&#8595;</button>
+        </div>
+        <div id="terminal-container">
+          <div id="terminal-start-overlay">
+            <div class="start-content">
+              <div class="start-icon">&#9654;</div>
+              <button id="start-terminal-btn" class="btn-start">Start Study Session</button>
+              <p class="start-desc">Opens Claude with your study plan loaded</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Notes / Reflection panel (bottom-right) -->
+    <div id="notes-panel" class="hidden">
+      <div id="notes-body">
+        <div class="notes-toolbar">
+          <div class="notes-tabs">
+            <button class="notes-tab-btn active" data-tab="notes">Notes</button>
+            <button class="notes-tab-btn" data-tab="reflection">Reflection</button>
+          </div>
+          <div class="notes-toolbar-actions">
+            <span id="notes-save-status"></span>
+            <button id="notes-close-btn" title="Close">✕</button>
+          </div>
+        </div>
+
+        <!-- Notes tab -->
+        <div class="notes-pane active" id="notes-pane">
+          <textarea id="notes-area" placeholder="Free-form notes — saved automatically per subject."></textarea>
+        </div>
+
+        <!-- Reflection tab -->
+        <div class="notes-pane" id="reflection-pane">
+          <div class="reflection-fields">
+
+            <div class="ref-field">
+              <label class="ref-label">Definitions in my own words</label>
+              <textarea id="ref-definitions" placeholder="How you described key terms during the review…"></textarea>
+            </div>
+
+            <div class="ref-field">
+              <label class="ref-label">Conceptual challenges</label>
+              <textarea id="ref-challenges" placeholder="What was hard to grasp or still feels fuzzy…"></textarea>
+            </div>
+
+            <div class="ref-field">
+              <label class="ref-label">Metaphors &amp; mental models</label>
+              <textarea id="ref-metaphors" placeholder="Analogies or comparisons that made things click…"></textarea>
+            </div>
+
+            <div class="ref-field">
+              <label class="ref-label">Q&amp;A notes</label>
+              <textarea id="ref-qa" placeholder="Which questions tripped you up and why…"></textarea>
+            </div>
+
+            <div class="ref-field ref-rating-row">
+              <label class="ref-label">Confidence after session</label>
+              <div class="rating-stars" id="ref-rating" data-value="0">
+                <span data-val="1">★</span>
+                <span data-val="2">★</span>
+                <span data-val="3">★</span>
+                <span data-val="4">★</span>
+                <span data-val="5">★</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+      <button id="notes-tab">&#128221; Notes &amp; Reflection</button>
+    </div>
+  </div>
+
+  <!-- Save confirmation toast -->
+  <div id="toast" class="hidden"></div>
+
+  <script src="/xterm/lib/xterm.js"></script>
+  <script src="/xterm-addon-fit/lib/addon-fit.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
