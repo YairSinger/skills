@@ -182,10 +182,16 @@ function buildCompletionRing(pct, colorClass) {
 async function loadPlan(slug) {
   const res = await fetch(`/api/plan/${slug}`);
   const data = await res.json();
-  currentPlan = { slug, content: data.content };
+  const kind = data.kind || 'md';
+  const meta = data.meta || {};
+  currentPlan = { slug, content: data.content, kind, meta };
 
-  const totalPlannedSeconds = parsePlannedDuration(data.content);
-  segments = parseSections(data.content, totalPlannedSeconds);
+  const totalPlannedSeconds = kind === 'html'
+    ? parseDurationString(meta.duration || '')
+    : parsePlannedDuration(data.content);
+  segments = kind === 'html'
+    ? parseSectionsHtml(data.content, totalPlannedSeconds)
+    : parseSections(data.content, totalPlannedSeconds);
 
   const saved = localStorage.getItem(`sb-timers-${slug}`);
   if (saved) {
@@ -198,8 +204,13 @@ async function loadPlan(slug) {
   document.getElementById('plan-selector').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
 
-  const titleMatch = data.content.match(/^#\s+Study Plan:\s+(.+)/m);
-  document.getElementById('plan-title').textContent = titleMatch ? titleMatch[1] : slug;
+  let resolvedTitle = meta.title;
+  if (!resolvedTitle && kind === 'md') {
+    const titleMatch = data.content.match(/^#\s+Study Plan:\s+(.+)/m);
+    resolvedTitle = titleMatch ? titleMatch[1] : slug;
+  }
+  currentPlan.title = resolvedTitle || slug;
+  document.getElementById('plan-title').textContent = currentPlan.title;
 
   const totalExpected = segments.reduce((sum, s) => sum + s.expectedSeconds, 0);
   const totalExpEl = document.getElementById('total-expected');
@@ -239,21 +250,73 @@ async function loadPlan(slug) {
   }
 }
 
-// ── Parse planned duration from header ──
+// ── Parse planned duration from header (markdown plans) ──
 function parsePlannedDuration(md) {
   const match = md.match(/\*\*Chosen duration:\*\*\s*(.+)/m);
-  if (!match) return 0;
-  const text = match[1].toLowerCase();
+  return match ? parseDurationString(match[1]) : 0;
+}
+
+// ── Parse a free-form duration string into total seconds ──
+function parseDurationString(text) {
+  if (!text) return 0;
+  const t = String(text).toLowerCase();
   let minutes = 0;
-  const hrMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:hr|hour)/);
-  const minMatch = text.match(/(\d+)\s*min/);
+  const hrMatch = t.match(/(\d+(?:\.\d+)?)\s*(?:hr|hour)/);
+  const minMatch = t.match(/(\d+)\s*min/);
   if (hrMatch) minutes += parseFloat(hrMatch[1]) * 60;
   if (minMatch) minutes += parseInt(minMatch[1]);
   if (!hrMatch && !minMatch) {
-    const num = parseFloat(text);
+    const num = parseFloat(t);
     if (!isNaN(num)) minutes = num * 60;
   }
   return minutes * 60;
+}
+
+// ── Parse HTML plan into segments ──
+function parseSectionsHtml(htmlString, totalPlannedSeconds) {
+  const doc = new DOMParser().parseFromString(htmlString, 'text/html');
+
+  // Collect all <style> from <head> to inject into each iframe
+  const styleBlocks = Array.from(doc.querySelectorAll('head style'))
+    .map(s => s.outerHTML).join('\n');
+
+  const segEls = Array.from(doc.querySelectorAll('section[data-segment-id]'));
+  const sections = segEls.map(sec => {
+    const id = sec.dataset.segmentId.trim();
+    const expectedMinutes = parseFloat(sec.dataset.expectedMinutes) || 0;
+    let expectedSeconds = Math.round(expectedMinutes * 60);
+    const titleEl = sec.querySelector('h1, h2, h3');
+    const title = (titleEl?.textContent || SEGMENT_LABELS[id] || id).trim();
+
+    const srcdoc = `<!doctype html><html><head><meta charset="utf-8">
+${styleBlocks}
+<style>
+  html, body { margin:0; padding:0; background:transparent; }
+  body { padding: 14px 18px; color:#d4d8f0; font-family:'Segoe UI', system-ui, sans-serif; line-height:1.65; font-size:14px; }
+  section[data-segment-id] { display:block; padding:0; margin:0; border:0; background:transparent; box-shadow:none; }
+  section[data-segment-id] > h1:first-child,
+  section[data-segment-id] > h2:first-child,
+  section[data-segment-id] > h3:first-child,
+  section[data-segment-id] > .section-header,
+  section[data-segment-id] > header { display:none; }
+  a { color:#5ec4ff; }
+  img, svg { max-width:100%; height:auto; }
+</style>
+</head><body>${sec.outerHTML}</body></html>`;
+
+    return { id, title, html: '', srcdoc, elapsed: 0, expectedSeconds, started: null, ended: null };
+  });
+
+  // Fallback expected times when none provided
+  const hasExpected = sections.some(s => s.expectedSeconds > 0);
+  if (!hasExpected && totalPlannedSeconds > 0) {
+    sections.forEach(s => {
+      const proportion = DEFAULT_PROPORTIONS[s.id] || (1 / sections.length);
+      s.expectedSeconds = Math.round(totalPlannedSeconds * proportion);
+    });
+  }
+
+  return sections;
 }
 
 // ── Parse expected time from section heading comment ──
@@ -409,6 +472,10 @@ function renderSections() {
     const pct = progress !== null ? Math.min(progress * 100, 100) : 0;
     const expectedLabel = s.expectedSeconds > 0 ? ` / ${formatTime(s.expectedSeconds)}` : '';
 
+    const bodyContent = s.srcdoc
+      ? `<iframe class="plan-iframe" data-index="${i}" sandbox="allow-same-origin" onload="window.__sbResizeIframe && window.__sbResizeIframe(this)"></iframe>`
+      : s.html;
+
     return `
     <div class="section-card${i === activeSegmentIndex ? ' active expanded' : ''} ${pClass}" data-index="${i}" id="section-${i}">
       <div class="section-header">
@@ -422,9 +489,16 @@ function renderSections() {
       <div class="section-progress-bar">
         <div class="section-progress-fill" id="section-progress-${i}" style="width: ${pct}%"></div>
       </div>
-      <div class="section-body">${s.html}</div>
+      <div class="section-body">${bodyContent}</div>
     </div>`;
   }).join('');
+
+  // Set iframe srcdoc programmatically (avoids HTML-attr escaping pitfalls)
+  container.querySelectorAll('iframe.plan-iframe').forEach(ifr => {
+    const idx = parseInt(ifr.dataset.index);
+    const seg = segments[idx];
+    if (seg && seg.srcdoc) ifr.srcdoc = seg.srcdoc;
+  });
 
   container.querySelectorAll('.section-header').forEach(header => {
     header.addEventListener('click', () => {
@@ -433,6 +507,24 @@ function renderSections() {
     });
   });
 }
+
+// Iframe height = content height. Called via onload.
+window.__sbResizeIframe = function(iframe) {
+  const sync = () => {
+    try {
+      const h = iframe.contentDocument.body.scrollHeight;
+      if (h > 0) iframe.style.height = (h + 8) + 'px';
+    } catch (e) { /* cross-origin guard */ }
+  };
+  sync();
+  // Re-sync after fonts/images settle
+  setTimeout(sync, 60);
+  setTimeout(sync, 300);
+  try {
+    const ro = new ResizeObserver(sync);
+    ro.observe(iframe.contentDocument.body);
+  } catch (e) {}
+};
 
 // ── Set Active Segment ──
 function setActiveSegment(index) {
@@ -585,9 +677,9 @@ function buildClaudeCommand() {
   }
   // Fallback if context file not ready yet
   if (!currentPlan) return 'claude\n';
-  const titleMatch = currentPlan.content.match(/^#\s+Study Plan:\s+(.+)/m);
-  const subject = titleMatch ? titleMatch[1] : currentPlan.slug.replace(/-/g, ' ');
-  return `claude "You are Study Buddy for '${subject}'. Read ~/study-plans/${currentPlan.slug}-study-plan.md then start Phase 2: Knowledge Partner."\n`;
+  const subject = currentPlan.title || currentPlan.slug.replace(/-/g, ' ');
+  const ext = currentPlan.kind === 'html' ? 'html' : 'md';
+  return `claude "You are Study Buddy for '${subject}'. Read ~/study-plans/${currentPlan.slug}-study-plan.${ext} then start Phase 2: Knowledge Partner."\n`;
 }
 
 function connectWebSocket(autoLaunchClaude) {
@@ -881,7 +973,8 @@ async function saveSession() {
     segments[activeSegmentIndex].ended = new Date().toISOString();
   }
 
-  const durationMatch = currentPlan.content.match(/\*\*Chosen duration:\*\*\s+(.+)/m);
+  const plannedDuration = currentPlan.meta?.duration ||
+    (currentPlan.content.match(/\*\*Chosen duration:\*\*\s+(.+)/m) || [])[1] || '';
   const segmentData = {};
   const completedSegments = [];
 
@@ -914,7 +1007,7 @@ async function saveSession() {
   const analytics = {
     subject: currentPlan.slug,
     date: new Date().toISOString(),
-    plannedDuration: durationMatch ? durationMatch[1] : '',
+    plannedDuration,
     segments: segmentData,
     totalDuration: segments.reduce((sum, s) => sum + s.elapsed, 0),
     totalExpected: segments.reduce((sum, s) => sum + s.expectedSeconds, 0),

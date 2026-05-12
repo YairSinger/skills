@@ -147,24 +147,107 @@ Outcome: [What success looks like — what the user should be able to show or ex
 
 ### Step 3: Save the Study Plan
 
+**Format selection.** Default is **HTML** (richer rendering, supports diagrams). If the user's invocation includes the flag `-md` (e.g. `/study-buddy redis -md`), generate the legacy Markdown format instead.
+
 1. Ensure the global study folder exists:
 ```bash
 mkdir -p ~/study-plans
 ```
 
 2. Create the plan file:
-   - Path: `~/study-plans/[subject-slug]-study-plan.md`
-   - Example: `~/study-plans/redis-study-plan.md`
-   - Use lowercase, hyphenated slugs
+   - HTML (default): `~/study-plans/[subject-slug]-study-plan.html`
+   - Markdown (`-md` flag): `~/study-plans/[subject-slug]-study-plan.md`
+   - Use lowercase, hyphenated slugs (e.g. `vector-databases`, `redis`)
 
-3. The file must include:
-   - `# Study Plan: [Subject]` as the title
-   - Date at the top
-   - Suggested duration and user's chosen duration
-   - All five sections above (skip Section 3 if not applicable)
-   - Each section heading must have an expected time comment, e.g.:
-     `## Section 1: Introduction Reading <!-- expected: 25m -->`
-   - A footer note: *"Answers to Q1–Q10 → `[subject-slug]-answers.md` (created during review)"*
+---
+
+#### 3A. HTML format (default) — required structure
+
+The Study Buddy app discovers segments by **`data-*` attributes**, not by visible headings. Each plan must include:
+
+```html
+<!DOCTYPE html>
+<html lang="en"
+      data-plan-title="[Subject]"
+      data-plan-date="[YYYY-MM-DD]"
+      data-plan-duration="[e.g. 1.5 hours]">
+<head>
+  <meta charset="UTF-8">
+  <title>Study Plan: [Subject]</title>
+  <style>/* plan-scoped styles — free design */</style>
+</head>
+<body>
+  <!-- Optional: visible header / timeline / overview here -->
+
+  <section data-segment-id="introduction" data-expected-minutes="22">
+    <h2>Introduction Reading</h2>
+    <!-- 500–800 word reading -->
+  </section>
+
+  <section data-segment-id="terms" data-expected-minutes="11">
+    <h2>20 Essential Terms</h2>
+    <!-- 20 one-liners -->
+  </section>
+
+  <section data-segment-id="commands" data-expected-minutes="7">
+    <h2>Key Commands</h2>
+    <!-- Skip this <section> entirely if subject has no CLI/tooling -->
+  </section>
+
+  <section data-segment-id="questions" data-expected-minutes="18">
+    <h2>10 Deep Understanding Questions</h2>
+    <!-- Q1–Q10, no answers -->
+  </section>
+
+  <section data-segment-id="hands-on" data-expected-minutes="32">
+    <h2>Hands-on Tasks</h2>
+    <!-- 3–5 tasks -->
+  </section>
+</body>
+</html>
+```
+
+**Hard requirements:**
+- `data-segment-id` values must be from the canonical set: `introduction`, `terms`, `commands`, `questions`, `hands-on`. These are the keys analytics is indexed by.
+- `data-expected-minutes` on each `<section>` — the timer/progress logic uses this.
+- `data-plan-title`, `data-plan-date`, `data-plan-duration` on the `<html>` element — these power the plan list, session-context, and the Claude launch command.
+- Same five-section coverage rules as before (skip `commands` if no CLI/tooling exists for the subject).
+
+**Visual rendering notes** (the app renders each `<section>` inside an iframe — your `<style>` block is isolated and won't leak into the app chrome):
+- The first `<h1>`/`<h2>`/`<h3>` of each section is **hidden inside the iframe** because the app already shows the title in the section card header. Don't rely on it visually.
+- Use the full power of HTML: code blocks, tables, callouts, lists. Style freely.
+
+#### Charts and diagrams — use sparingly
+
+Diagrams are valuable **only when they advance understanding faster than prose** — e.g. showing a multi-layer graph structure, a pipeline of stages, a clustering layout. Use them **only** for these cases:
+
+| ✓ Worth a diagram | ✗ Skip the diagram |
+|---|---|
+| Spatial/structural relationships (graphs, layered architectures, clusters) | Lists of concepts or terms — those are text |
+| Pipelines / data flow with multiple stages | Linear processes that one sentence already explains |
+| Comparative layouts (side-by-side of two algorithms) | Decorative section dividers or headers |
+| Geometric concepts (cosine vs Euclidean, Voronoi cells) | Anything that's just a styled bullet list |
+
+Constraints:
+- **At most 2–3 diagrams** per study plan total. If you reach 4, you're decorating.
+- Prefer **inline SVG** (no external deps). Keep each under ~250 lines.
+- Each diagram needs a one-line caption explaining what the reader should take away.
+- If the subject is text-heavy (e.g. CMake commands, REST APIs, OAuth flows), it's perfectly fine to have **zero diagrams**. Don't force them.
+
+---
+
+#### 3B. Markdown format (`-md` flag) — legacy structure
+
+The file must include:
+- `# Study Plan: [Subject]` as the title
+- `**Date:**` and `**Chosen duration:**` near the top
+- All five sections (skip Section 3 if not applicable), each headed `## Section N: …`
+- Each section heading must include an expected-time comment: `## Section 1: Introduction Reading <!-- expected: 25m -->`
+- A footer note: *"Answers to Q1–Q10 → `[subject-slug]-answers.md` (created during review)"*
+
+No diagrams in Markdown mode — this is the simple, text-only path.
+
+---
 
 4. **Launch the Study Buddy app:**
 ```bash

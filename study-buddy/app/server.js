@@ -15,6 +15,42 @@ const wss = new WebSocketServer({ server, path: '/terminal' });
 const PLANS_DIR = path.join(os.homedir(), 'study-plans');
 const ANALYTICS_DIR = path.join(__dirname, 'analytics');
 
+// ── Plan resolver: prefer HTML, fall back to MD ──────────────────────────────
+function findPlan(slug) {
+  const htmlPath = path.join(PLANS_DIR, `${slug}-study-plan.html`);
+  const mdPath   = path.join(PLANS_DIR, `${slug}-study-plan.md`);
+  if (fs.existsSync(htmlPath)) return { path: htmlPath, kind: 'html' };
+  if (fs.existsSync(mdPath))   return { path: mdPath,   kind: 'md' };
+  return null;
+}
+
+function readPlan(slug) {
+  const p = findPlan(slug);
+  if (!p) return null;
+  return { ...p, content: fs.readFileSync(p.path, 'utf-8') };
+}
+
+function extractPlanMeta(content, kind) {
+  if (kind === 'html') {
+    const attr = (re) => (content.match(re) || [])[1] || '';
+    const title    = attr(/<html[^>]*\sdata-plan-title="([^"]+)"/i)
+                   || attr(/<title[^>]*>Study Plan:\s*([^<]+)<\/title>/i)
+                   || attr(/<title[^>]*>([^<]+)<\/title>/i);
+    const date     = attr(/<html[^>]*\sdata-plan-date="([^"]+)"/i);
+    const duration = attr(/<html[^>]*\sdata-plan-duration="([^"]+)"/i);
+    const stage    = attr(/<meta\s+name="study-stage"\s+content="([^"]+)"/i);
+    return { title: title.trim(), date: date.trim(), duration: duration.trim(), stage: stage.trim() };
+  }
+  // markdown
+  const m = (re) => (content.match(re) || [])[1] || '';
+  return {
+    title:    m(/^#\s+Study Plan:\s+(.+)/m).trim(),
+    date:     m(/\*\*Date:\*\*\s+(.+)/m).trim(),
+    duration: m(/\*\*Chosen duration:\*\*\s+(.+)/m).trim(),
+    stage:    m(/\*\*Current Stage:\*\*\s*(.+)/m).trim(),
+  };
+}
+
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/xterm', express.static(path.join(__dirname, 'node_modules', '@xterm', 'xterm')));
@@ -22,12 +58,10 @@ app.use('/xterm-addon-fit', express.static(path.join(__dirname, 'node_modules', 
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function generateSessionContext(slug, planContent) {
-  const titleMatch = planContent.match(/^#\s+Study Plan:\s+(.+)/m);
-  const subject = titleMatch ? titleMatch[1] : slug.replace(/-/g, ' ');
-  const stageMatch = planContent.match(/\*\*Current Stage:\*\*\s*(.+)/m);
-  const stage = stageMatch ? stageMatch[1].trim() : 'Phase 1: Study Plan';
-  const planFilePath = path.join(os.homedir(), 'study-plans', `${slug}-study-plan.md`);
+function generateSessionContext(slug, planContent, kind, planFilePath) {
+  const meta = extractPlanMeta(planContent, kind);
+  const subject = meta.title || slug.replace(/-/g, ' ');
+  const stage = meta.stage || 'Phase 1: Study Plan';
 
   let instruction = `Move directly into Phase 2: Knowledge Partner. Welcome the student and invite them to ask anything about ${subject}.`;
   if (stage.includes('Phase 2'))
@@ -65,35 +99,78 @@ function generateSessionContext(slug, planContent) {
 }
 
 function updateStageInPlan(slug, stageValue) {
-  const planPath = path.join(PLANS_DIR, `${slug}-study-plan.md`);
-  if (!fs.existsSync(planPath)) return false;
-  let content = fs.readFileSync(planPath, 'utf-8');
-  if (content.includes('**Current Stage:**')) {
-    content = content.replace(/\*\*Current Stage:\*\*[^\n]*/m, `**Current Stage:** ${stageValue}`);
+  const p = findPlan(slug);
+  if (!p) return false;
+  let content = fs.readFileSync(p.path, 'utf-8');
+
+  if (p.kind === 'html') {
+    const escaped = stageValue.replace(/"/g, '&quot;');
+    if (/<meta\s+name="study-stage"/i.test(content)) {
+      content = content.replace(
+        /<meta\s+name="study-stage"\s+content="[^"]*"\s*\/?>/i,
+        `<meta name="study-stage" content="${escaped}">`
+      );
+    } else {
+      content = content.replace(
+        /<\/head>/i,
+        `  <meta name="study-stage" content="${escaped}">\n</head>`
+      );
+    }
   } else {
-    // Insert after **Chosen duration:** line
-    content = content.replace(
-      /(\*\*Chosen duration:\*\*[^\n]*\n)/,
-      `$1**Current Stage:** ${stageValue}\n`
-    );
+    if (content.includes('**Current Stage:**')) {
+      content = content.replace(/\*\*Current Stage:\*\*[^\n]*/m, `**Current Stage:** ${stageValue}`);
+    } else {
+      content = content.replace(
+        /(\*\*Chosen duration:\*\*[^\n]*\n)/,
+        `$1**Current Stage:** ${stageValue}\n`
+      );
+    }
   }
-  fs.writeFileSync(planPath, content);
+  fs.writeFileSync(p.path, content);
   return true;
 }
 
 function appendSessionSummaryToPlan(slug, analysis, sessionDate) {
-  const planPath = path.join(PLANS_DIR, `${slug}-study-plan.md`);
-  if (!fs.existsSync(planPath)) return;
+  const p = findPlan(slug);
+  if (!p) return;
 
   const d = new Date(sessionDate);
   const dateStr = isNaN(d.getTime())
     ? new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
     : d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
+  if (p.kind === 'html') {
+    const esc = (s) => String(s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const parts = [`<section class="session-summary" style="margin:24px 0;padding:16px 20px;border-left:3px solid #7c6af7;background:rgba(124,106,247,0.08);border-radius:0 8px 8px 0;">`];
+    parts.push(`<h2 style="margin:0 0 8px;font-size:1rem;color:#fff;">Session Summary — ${esc(dateStr)}</h2>`);
+    if (analysis.summary) parts.push(`<p>${esc(analysis.summary)}</p>`);
+    const block = (title, items, render) => {
+      if (!items?.length) return;
+      parts.push(`<p style="margin-top:10px;"><strong>${title}:</strong></p><ul>`);
+      for (const it of items) parts.push(`<li>${render(it)}</li>`);
+      parts.push(`</ul>`);
+    };
+    block('My definitions', analysis.definitions, d => `<strong>${esc(d.term)}</strong>: ${esc(d.definition)}`);
+    block('Challenges',     analysis.challenges,  c => esc(c));
+    block('Metaphors & mental models', analysis.metaphors, m => esc(m));
+    block('Q+A insights',   analysis.qa_insights, q => esc(q));
+    parts.push(`</section>`);
+    const block_html = parts.join('\n');
+
+    let content = fs.readFileSync(p.path, 'utf-8');
+    if (/<\/body>/i.test(content)) {
+      content = content.replace(/<\/body>/i, `${block_html}\n</body>`);
+    } else {
+      content += '\n' + block_html;
+    }
+    fs.writeFileSync(p.path, content);
+    return;
+  }
+
+  // Markdown
   const lines = [`\n\n---\n\n## Session Summary — ${dateStr}\n`];
-
   if (analysis.summary) lines.push(`${analysis.summary}\n`);
-
   if (analysis.definitions?.length) {
     lines.push('\n**My definitions:**');
     for (const d of analysis.definitions) lines.push(`- **${d.term}**: ${d.definition}`);
@@ -110,8 +187,7 @@ function appendSessionSummaryToPlan(slug, analysis, sessionDate) {
     lines.push('\n**Q+A insights:**');
     for (const q of analysis.qa_insights) lines.push(`- ${q}`);
   }
-
-  fs.appendFileSync(planPath, lines.join('\n') + '\n');
+  fs.appendFileSync(p.path, lines.join('\n') + '\n');
 }
 
 async function analyzeSessionTranscript(transcript, subject) {
@@ -154,10 +230,10 @@ async function analyzeSessionTranscript(transcript, subject) {
 }
 
 async function analyzeAndStore(slug, transcript, sessionDate) {
-  const planPath = path.join(PLANS_DIR, `${slug}-study-plan.md`);
-  const planContent = fs.existsSync(planPath) ? fs.readFileSync(planPath, 'utf-8') : '';
-  const titleMatch = planContent.match(/^#\s+Study Plan:\s+(.+)/m);
-  const subject = titleMatch ? titleMatch[1] : slug.replace(/-/g, ' ');
+  const p = readPlan(slug);
+  const planContent = p ? p.content : '';
+  const meta = p ? extractPlanMeta(planContent, p.kind) : { title: '' };
+  const subject = meta.title || slug.replace(/-/g, ' ');
 
   const analysis = await analyzeSessionTranscript(transcript, subject);
   if (!analysis) return;
@@ -179,46 +255,48 @@ async function analyzeAndStore(slug, transcript, sessionDate) {
 
 // ── API ───────────────────────────────────────────────────────────────────────
 
-// List plans
+// List plans — prefer HTML over MD when both exist for a slug
 app.get('/api/plans', (req, res) => {
   try {
-    const files = fs.readdirSync(PLANS_DIR)
-      .filter(f => f.endsWith('-study-plan.md'))
-      .map(f => {
-        const slug = f.replace('-study-plan.md', '');
-        const content = fs.readFileSync(path.join(PLANS_DIR, f), 'utf-8');
-        const titleMatch    = content.match(/^#\s+Study Plan:\s+(.+)/m);
-        const dateMatch     = content.match(/\*\*Date:\*\*\s+(.+)/m);
-        const durationMatch = content.match(/\*\*Chosen duration:\*\*\s+(.+)/m);
-        return {
-          slug, filename: f,
-          title:    titleMatch    ? titleMatch[1]    : slug,
-          date:     dateMatch     ? dateMatch[1]     : '',
-          duration: durationMatch ? durationMatch[1] : ''
-        };
-      })
-      .sort((a, b) => b.date.localeCompare(a.date));
+    const bySlug = new Map();
+    for (const f of fs.readdirSync(PLANS_DIR)) {
+      let slug = null, kind = null;
+      if (f.endsWith('-study-plan.html')) { slug = f.replace('-study-plan.html', ''); kind = 'html'; }
+      else if (f.endsWith('-study-plan.md')) { slug = f.replace('-study-plan.md', ''); kind = 'md'; }
+      else continue;
+      // HTML wins if both present
+      if (bySlug.has(slug) && bySlug.get(slug).kind === 'html') continue;
+      const content = fs.readFileSync(path.join(PLANS_DIR, f), 'utf-8');
+      const meta = extractPlanMeta(content, kind);
+      bySlug.set(slug, {
+        slug, filename: f, kind,
+        title: meta.title || slug,
+        date: meta.date,
+        duration: meta.duration
+      });
+    }
+    const files = Array.from(bySlug.values()).sort((a, b) => b.date.localeCompare(a.date));
     res.json(files);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Get plan
+// Get plan (HTML or MD)
 app.get('/api/plan/:slug', (req, res) => {
-  const fp = path.join(PLANS_DIR, `${req.params.slug}-study-plan.md`);
-  if (!fs.existsSync(fp)) return res.status(404).json({ error: 'Plan not found' });
-  res.json({ slug: req.params.slug, content: fs.readFileSync(fp, 'utf-8') });
+  const p = readPlan(req.params.slug);
+  if (!p) return res.status(404).json({ error: 'Plan not found' });
+  const meta = extractPlanMeta(p.content, p.kind);
+  res.json({ slug: req.params.slug, kind: p.kind, content: p.content, meta });
 });
 
 // Session context — writes /tmp context file, returns its path + current stage
 app.get('/api/session-context/:slug', (req, res) => {
-  const fp = path.join(PLANS_DIR, `${req.params.slug}-study-plan.md`);
-  if (!fs.existsSync(fp)) return res.status(404).json({ error: 'Plan not found' });
-  const content = fs.readFileSync(fp, 'utf-8');
-  const ctx = generateSessionContext(req.params.slug, content);
+  const p = readPlan(req.params.slug);
+  if (!p) return res.status(404).json({ error: 'Plan not found' });
+  const ctx = generateSessionContext(req.params.slug, p.content, p.kind, p.path);
   const tmpPath = path.join(os.tmpdir(), `sb-ctx-${req.params.slug}.txt`);
   fs.writeFileSync(tmpPath, ctx);
-  const stageMatch = content.match(/\*\*Current Stage:\*\*\s*(.+)/m);
-  res.json({ contextPath: tmpPath, stage: stageMatch ? stageMatch[1].trim() : 'Phase 1: Study Plan' });
+  const meta = extractPlanMeta(p.content, p.kind);
+  res.json({ contextPath: tmpPath, stage: meta.stage || 'Phase 1: Study Plan' });
 });
 
 // Update stage in plan file + regenerate context file
@@ -228,10 +306,9 @@ app.post('/api/stage/:slug', (req, res) => {
   updateStageInPlan(req.params.slug, value);
 
   // Regenerate context file so next launch picks it up
-  const fp = path.join(PLANS_DIR, `${req.params.slug}-study-plan.md`);
-  if (fs.existsSync(fp)) {
-    const content = fs.readFileSync(fp, 'utf-8');
-    const ctx = generateSessionContext(req.params.slug, content);
+  const p = readPlan(req.params.slug);
+  if (p) {
+    const ctx = generateSessionContext(req.params.slug, p.content, p.kind, p.path);
     try { fs.writeFileSync(path.join(os.tmpdir(), `sb-ctx-${req.params.slug}.txt`), ctx); } catch {}
   }
   res.json({ updated: true, value });

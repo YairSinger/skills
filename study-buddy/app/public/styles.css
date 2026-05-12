@@ -598,7 +598,15 @@ header {
   transition: max-height 0.3s ease;
 }
 
-.section-card.expanded .section-body { max-height: 5000px; }
+.section-card.expanded .section-body { max-height: 12000px; }
+
+iframe.plan-iframe {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  display: block;
+  min-height: 40px;
+}
 
 /* Markdown content */
 .section-body h3 { color: var(--text-bright); margin: 1rem 0 0.5rem; font-size: 1rem; }
